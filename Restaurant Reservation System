@@ -1,0 +1,393 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <limits>
+#include <algorithm>
+#include <ctime>  // ✅ Required for time(), time_t, etc.
+using namespace std;
+
+struct Reservation {
+    int reservationID;
+    string date;
+    string time;
+    string leaveTime;
+    int partySize;
+    string status;
+    int tableNumber;
+};
+
+vector<Reservation> reservations;
+vector<Reservation> waitlist;
+const int TOTAL_TABLES = 20;
+int nextReservationID = 1;
+
+const string OPEN_TIME = "10:00 AM";
+const string CLOSE_TIME = "11:00 PM";
+
+int toMinutes(string t) {
+    t.erase(remove(t.begin(), t.end(), ' '), t.end());
+    int hour = stoi(t.substr(0, t.find(':')));
+    int minute = stoi(t.substr(t.find(':') + 1, 2));
+    string ampm = t.substr(t.size() - 2);
+    if (ampm == "PM" && hour != 12) hour += 12;
+    if (ampm == "AM" && hour == 12) hour = 0;
+    return hour * 60 + minute;
+}
+
+// ✅ New function added
+bool isValidFutureTime(const string& inputDate, const string& inputTime) {
+    // Get current time
+    time_t now = std::time(nullptr);
+    tm* localNow = std::localtime(&now);
+
+    // Parse input date
+    int year, month, day;
+    if (sscanf(inputDate.c_str(), "%d-%d-%d", &year, &month, &day) != 3)
+        return false;
+
+    // Parse input time
+    string t = inputTime;
+    t.erase(remove(t.begin(), t.end(), ' '), t.end());
+    int hour = stoi(t.substr(0, t.find(':')));
+    int minute = stoi(t.substr(t.find(':') + 1, 2));
+    string ampm = t.substr(t.size() - 2);
+    if (ampm == "PM" && hour != 12) hour += 12;
+    if (ampm == "AM" && hour == 12) hour = 0;
+
+    // Construct tm struct from user input
+    tm inputTm = {};
+    inputTm.tm_year = year - 1900;
+    inputTm.tm_mon = month - 1;
+    inputTm.tm_mday = day;
+    inputTm.tm_hour = hour;
+    inputTm.tm_min = minute;
+    inputTm.tm_sec = 0;
+
+    time_t inputTimeT = std::mktime(&inputTm);
+
+    return difftime(inputTimeT, now) > 0;
+}
+
+
+bool isOverlap(string start1, string end1, string start2, string end2) {
+    int s1 = toMinutes(start1);
+    int e1 = toMinutes(end1);
+    int s2 = toMinutes(start2);
+    int e2 = toMinutes(end2);
+    return max(s1, s2) < min(e1, e2);
+}
+
+vector<int> getAvailableTables(string date, string entry, string leave) {
+    vector<int> available;
+    for (int i = 1; i <= TOTAL_TABLES; ++i) {
+        bool isFree = true;
+        for (const auto& res : reservations) {
+            if (res.date == date && res.status == "Booked" && res.tableNumber == i &&
+                isOverlap(res.time, res.leaveTime, entry, leave)) {
+                isFree = false;
+                break;
+            }
+        }
+        if (isFree) available.push_back(i);
+    }
+    return available;
+}
+
+bool isWithinBusinessHours(string entry, string leave) {
+    int open = toMinutes(OPEN_TIME);
+    int close = toMinutes(CLOSE_TIME);
+    int start = toMinutes(entry);
+    int end = toMinutes(leave);
+    return start >= open && end <= close && start < end;
+}
+
+void bookTable(string date, string time, string leaveTime, int partySize, int tableNo) {
+    reservations.push_back({nextReservationID++, date, time, leaveTime, partySize, "Booked", tableNo});
+    cout << "✅ Reservation ID: " << reservations.back().reservationID << " | Table " << tableNo 
+         << " booked for " << partySize << " guests on " << date 
+         << " from " << time << " to " << leaveTime << ".\n";
+}
+
+void addToWaitlist(string date, string time, string leaveTime, int partySize) {
+    waitlist.push_back({nextReservationID++, date, time, leaveTime, partySize, "Waitlist", -1});
+    cout << "📋 Added to waitlist. Reservation ID: " << waitlist.back().reservationID 
+         << " | " << partySize << " guests on " << date 
+         << " from " << time << " to " << leaveTime << ".\n";
+}
+
+void optimizeTables() {
+    vector<Reservation> newWaitlist;
+    for (auto& w : waitlist) {
+        vector<int> freeTables = getAvailableTables(w.date, w.time, w.leaveTime);
+        if (!freeTables.empty()) {
+            reservations.push_back({w.reservationID, w.date, w.time, w.leaveTime, w.partySize, "Booked", freeTables[0]});
+            cout << "✅ Promoted Reservation ID " << w.reservationID << " to Table " << freeTables[0] << ".\n";
+        } else {
+            newWaitlist.push_back(w);
+        }
+    }
+    waitlist = newWaitlist;
+    cout << "🔄 Table assignments optimized.\n";
+}
+
+void cancelReservationByID(int reservationID) {
+    bool found = false;
+    for (auto& res : reservations) {
+        if (res.reservationID == reservationID && res.status == "Booked") {
+            res.status = "Cancelled";
+            cout << "❌ Reservation ID " << reservationID << " at Table " << res.tableNumber << " cancelled.\n";
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        cout << "⚠️ No matching reservation found with ID " << reservationID << ".\n";
+        return;
+    }
+
+    optimizeTables(); // Try promoting waitlisted entries
+}
+
+void displayInfo() {
+    cout << "\n--- Reservations (Booked) ---\n";
+    bool hasBooked = false;
+    for (const auto& res : reservations) {
+        if (res.status == "Booked") {
+            cout << "ID: " << res.reservationID << ", Date: " << res.date 
+                 << ", Time: " << res.time << "-" << res.leaveTime
+                 << ", Party: " << res.partySize << ", Table: " << res.tableNumber << "\n";
+            hasBooked = true;
+        }
+    }
+    if (!hasBooked) cout << "No booked reservations.\n";
+
+    cout << "\n--- Reservations (Cancelled) ---\n";
+    bool hasCancelled = false;
+    for (const auto& res : reservations) {
+        if (res.status == "Cancelled") {
+            cout << "ID: " << res.reservationID << ", Date: " << res.date 
+                 << ", Time: " << res.time << "-" << res.leaveTime
+                 << ", Party: " << res.partySize << ", Table: " << res.tableNumber << "\n";
+            hasCancelled = true;
+        }
+    }
+    if (!hasCancelled) cout << "No cancelled reservations.\n";
+
+    cout << "\n--- Waitlist ---\n";
+    bool hasWaitlist = false;
+    for (const auto& w : waitlist) {
+        cout << "ID: " << w.reservationID << ", Date: " << w.date 
+             << ", Time: " << w.time << "-" << w.leaveTime
+             << ", Party: " << w.partySize << "\n";
+        hasWaitlist = true;
+    }
+    if (!hasWaitlist) cout << "No waitlisted reservations.\n";
+}
+void updateReservation(vector<Reservation>& reservations) {
+    int reservationID;
+    cout << "Enter Reservation ID to update: ";
+    cin >> reservationID;
+    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+    bool found = false;
+    for (auto it = reservations.begin(); it != reservations.end(); ++it) {
+        if (it->reservationID == reservationID && it->status == "Booked") {
+            found = true;
+            cout << "\nCurrent Reservation:\n";
+            cout << "Date: " << it->date << "\n";
+            cout << "Time: " << it->time << " - " << it->leaveTime << "\n";
+            cout << "Party Size: " << it->partySize << "\n";
+
+            string newDate = it->date, newTime = it->time, newLeave = it->leaveTime;
+            int newPartySize = it->partySize;
+
+            string choice;
+            cout << "\nEnter the details you want to update.\n";
+
+            cout << "Update Date? (y/n): ";
+            getline(cin, choice);
+            if (choice == "y" || choice == "Y") {
+                cout << "Enter new date (YYYY-MM-DD): ";
+                getline(cin, newDate);
+            }
+
+            cout << "Update both Entry and Leave Time together? (y/n): ";
+            getline(cin, choice);
+            if (choice == "y" || choice == "Y") {
+                cout << "Enter new entry time (e.g. 07:00 PM): ";
+                getline(cin, newTime);
+                cout << "Enter new leave time (e.g. 09:00 PM): ";
+                getline(cin, newLeave);
+            } else {
+                cout << "Update Entry Time only? (y/n): ";
+                getline(cin, choice);
+                if (choice == "y" || choice == "Y") {
+                    cout << "Enter new entry time (e.g. 07:00 PM): ";
+                    getline(cin, newTime);
+                }
+
+                cout << "Update Leave Time only? (y/n): ";
+                getline(cin, choice);
+                if (choice == "y" || choice == "Y") {
+                    cout << "Enter new leave time (e.g. 09:00 PM): ";
+                    getline(cin, newLeave);
+                }
+            }
+
+            cout << "Update Party Size? (y/n): ";
+            getline(cin, choice);
+            if (choice == "y" || choice == "Y") {
+                cout << "Enter new party size: ";
+                cin >> newPartySize;
+                cin.ignore(numeric_limits<streamsize>::max(), '\n');
+            }
+
+            if (!isValidFutureTime(newDate, newTime)) {
+                cout << "❌ Cannot set reservation in the past.\n";
+                return;
+            }
+
+            if (!isWithinBusinessHours(newTime, newLeave)) {
+                cout << "❌ Time must be between " << OPEN_TIME << " and " << CLOSE_TIME << ".\n";
+                return;
+            }
+
+            bool conflict = false;
+            for (const auto& other : reservations) {
+                if (other.reservationID != reservationID &&
+                    other.date == newDate &&
+                    other.tableNumber == it->tableNumber &&
+                    other.status == "Booked" &&
+                    isOverlap(newTime, newLeave, other.time, other.leaveTime)) {
+                    conflict = true;
+                    break;
+                }
+            }
+
+            if (conflict) {
+                cout << "⚠️ Table is already booked during the new time.\n";
+                cout << "📥 Moving to waitlist with updated details...\n";
+
+                // Use existing function to add to waitlist
+                addToWaitlist(newDate, newTime, newLeave, newPartySize);
+
+                // Remove old reservation from list
+                reservations.erase(it);
+                return;
+            }
+
+            // No conflict, apply updates
+            it->date = newDate;
+            it->time = newTime;
+            it->leaveTime = newLeave;
+            it->partySize = newPartySize;
+
+            cout << "✅ Reservation updated successfully.\n";
+            return;
+        }
+    }
+
+    if (!found) {
+        cout << "❌ Reservation not found or not active.\n";
+    }
+}
+
+
+int main() {
+    string input;
+    int choice;
+
+    while (true) {
+        cout << "\n--- Restaurant Reservation System ---\n";
+        cout << "Restaurant Hours: " << OPEN_TIME << " to " << CLOSE_TIME << "\n";
+        cout << "1. Book Table\n";
+        cout << "2. Cancel Reservation by ID\n";
+        cout << "3. Info (Reservations and Waitlist)\n";
+        cout << "4. Update Reservation\n";//⬅️Add this in your menu
+        cout << "5. Exit\n";
+        cout << "Enter your choice (1-4): ";
+
+        getline(cin, input);
+        try {
+            choice = stoi(input);
+        } catch (...) {
+            cout << "⚠️ Invalid input. Try again.\n";
+            continue;
+        }
+
+        if (choice == 5) {
+            cout << "👋 Thank you for visiting! Have a great day!\n";
+            break;
+        }
+
+        string date, time, leaveTime;
+        int partySize, tableNo, reservationID;
+
+        switch (choice) {
+            case 1:
+                cout << "Enter date (YYYY-MM-DD): ";
+                getline(cin, date);
+                cout << "Enter entry time (e.g. 07:00 PM): ";
+                getline(cin, time);
+                
+                // ✅ Check for past date/time right after entry
+                if (!isValidFutureTime(date, time)) {
+                    cout << "❌ Cannot book a reservation in the past.\n";
+                    break;
+                }
+                
+                cout << "Enter leaving time (e.g. 09:00 PM): ";
+                getline(cin, leaveTime);
+                cout << "Enter party size: ";
+                cin >> partySize;
+                cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+
+                if (!isWithinBusinessHours(time, leaveTime)) {
+                    cout << "❌ Reservation must be between " << OPEN_TIME << " and " << CLOSE_TIME << ".\n";
+                    break;
+                }
+
+                {
+                    vector<int> available = getAvailableTables(date, time, leaveTime);
+                    if (available.empty()) {
+                        addToWaitlist(date, time, leaveTime, partySize);
+                        break;
+                    }
+
+                    cout << "🪑 Available tables: ";
+                    for (int t : available) cout << t << " ";
+                    cout << "\nChoose a table number from the above: ";
+                    cin >> tableNo;
+                    cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+                    if (find(available.begin(), available.end(), tableNo) != available.end()) {
+                        bookTable(date, time, leaveTime, partySize, tableNo);
+                    } else {
+                        cout << "⚠️ Invalid table number. Try booking again.\n";
+                    }
+                }
+                break;
+
+            case 2:
+                cout << "Enter Reservation ID to cancel: ";
+                cin >> reservationID;
+                cin.ignore(numeric_limits<streamsize>::max(), '\n');
+                cancelReservationByID(reservationID);
+                break;
+
+            case 3:
+                displayInfo();
+                break;
+            case 4:
+                updateReservation(reservations);
+                break;
+
+            default:
+                cout << "❗ Invalid choice. Try again.\n";
+        }
+    }
+
+    return 0;
+}
